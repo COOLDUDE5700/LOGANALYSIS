@@ -1,72 +1,86 @@
+#!/usr/bin/env python
+
 import psycopg2
 DB_NAME = "news"
 
 THREE_POP_ARTICLES = '''
 SELECT
-    a.title , count(l.id) as views
+    articles.title , count(*) as views
 FROM
-    articles as a LEFT JOIN log as l
-    ON CONCAT('/article/',a.slug) = l.path
-GROUP BY a.title
-ORDER BY views DESC
-LIMIT 3;
+    articles INNER JOIN log
+    ON log.path = CONCAT('/article/',articles.slug)
+GROUP BY articles.title
+ORDER BY views DESC LIMIT 3;
 '''
 MOST_POP_AUTHORS = '''
 SELECT
-    au.name as name, COUNT(au.id) as total_views
+    authors.name , COUNT(*) as viewss
 FROM
-    authors as au LEFT JOIN articles as ar
-    ON au.id = ar.author
-    LEFT JOIN log as l
-    ON CONCAT('/article/',ar.slug) = l.path
-GROUP BY au.id
-ORDER BY total_views DESC;
+    authors INNER JOIN articles
+    ON authors.id = articles.author
+    INNER JOIN log
+    ON CONCAT('/article/',articles.slug) = log.path
+GROUP BY authors.name
+ORDER BY viewss DESC;
 '''
 ERROR = '''
 SELECT
-    to_char(errors_by_day.date,'Month DD, YYYY') as date,
-    to_char(((errors_by_day.count::decimal/requests_by_day.count::decimal)*100),'9.99') || '%' as percent
+     TO_CHAR(total_requests_grouped.a,'Mon DD, YYYY') as date,
+     round((cast((total_errors) as numeric)
+     /cast((total_requests) as numeric)*100),2) as percentage
 FROM
-    (select date(time),count(*) FROM log
-        GROUP BY date(time)) as requests_by_day,
-    (select date(time),count(*) FROM log WHERE status != '200 OK'
-        GROUP BY date(time)) as errors_by_day
-WHERE
-    requests_by_day.date = errors_by_day.date
-    and ((errors_by_day.count::decimal/requests_by_day.count::decimal)*100) > 1;
+    ((select date(time) as a,count(*) as total_requests FROM log
+     group by a) as total_requests_grouped
+     left join
+    (select date(time) as a,count(*) as total_errors
+     FROM log where log.status != '200 OK'
+     group by a) as total_errors_grouped
+    on total_errors_grouped.a = total_requests_grouped.a)
+    where (round((cast((total_errors) as numeric)
+    /cast((total_requests) as numeric)*100),2) > 1.0);
+
 '''
 
+
 def ConnectDB(query):
-    db = psycopg2.connect(database=DB_NAME)
-    cursor = db.cursor()
-    cursor.execute(query)
-    return cursor.fetchall()
+    try:
+        db = psycopg2.connect(database=DB_NAME)
+    except psycopg2.Error as e:
+        print("Unable to connect to the database")
+        print(e.pgerror)
+        print(e.diag.message_detail)
+        sys.exit(1)
+    c = db.cursor()
+    c.execute(query)
+    rows = c.fetchall()
+    return rows
     db.close()
+
 
 def MOST_POP_ARTICLES():
     print "what are the most popular three articles of all time?\n"
     rows = ConnectDB(THREE_POP_ARTICLES)
-    for row in rows:
-        print "%s - %d views" % (row[0], row[1])
+    for i in rows:
+        print (str(i[0]) + " -- " + str(i[1]))
+
 
 def MOST_POP_AUTHOR():
     print "who are the most popular article authors of all time?\n"
     rows = ConnectDB(MOST_POP_AUTHORS)
-    for row in rows:
-        print "%s - %d views" % (row[0], row[1])
+    for i in rows:
+        print (str(i[0]) + " -- " + str(i[1]))
+
 
 def ERRORS():
     print "ON which days did more than 1% of requests lead to errors?\n"
     rows = ConnectDB(ERROR)
-    for row in rows:
-        print "%s - %s errors" % (row[0], row[1])
+    for i in rows:
+        print (str(i[0]) + " -- " + str(i[1]) + "%")
 
-def LetItRip():
-    print ""
+
+if __name__ == '__main__':
     MOST_POP_ARTICLES()
     print "\n"
     MOST_POP_AUTHOR()
     print "\n"
     ERRORS()
-
-LetItRip()
